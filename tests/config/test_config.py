@@ -158,6 +158,14 @@ class TestSettings:
         settings = Settings()
         assert settings.enable_model_thinking is False
 
+    def test_wafer_api_key_from_env(self, monkeypatch):
+        """WAFER_API_KEY env var is loaded into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("WAFER_API_KEY", "wafer-key")
+        settings = Settings()
+        assert settings.wafer_api_key == "wafer-key"
+
     def test_per_model_thinking_from_env(self, monkeypatch):
         """Per-model thinking env vars are loaded into settings."""
         from config.settings import Settings
@@ -507,6 +515,7 @@ class TestPerModelMapping:
                 "open_router/anthropic/claude-3-haiku",
             ),
             ({"MODEL": "deepseek/deepseek-chat"}, "deepseek/deepseek-chat", None),
+            ({"MODEL": "wafer/DeepSeek-V4-Pro"}, "wafer/DeepSeek-V4-Pro", None),
             ({"MODEL": "lmstudio/qwen2.5-7b"}, "lmstudio/qwen2.5-7b", None),
             ({"MODEL": "llamacpp/local-model"}, "llamacpp/local-model", None),
             ({"MODEL": "ollama/llama3.1"}, "ollama/llama3.1", None),
@@ -647,6 +656,7 @@ class TestPerModelMapping:
         assert Settings.parse_provider_type("lmstudio/qwen") == "lmstudio"
         assert Settings.parse_provider_type("llamacpp/model") == "llamacpp"
         assert Settings.parse_provider_type("ollama/llama3.1") == "ollama"
+        assert Settings.parse_provider_type("wafer/DeepSeek-V4-Pro") == "wafer"
 
     def test_parse_model_name(self):
         """parse_model_name extracts model name from model string."""
@@ -657,3 +667,31 @@ class TestPerModelMapping:
         assert Settings.parse_model_name("lmstudio/qwen") == "qwen"
         assert Settings.parse_model_name("llamacpp/model") == "model"
         assert Settings.parse_model_name("ollama/llama3.1") == "llama3.1"
+        assert Settings.parse_model_name("wafer/DeepSeek-V4-Pro") == "DeepSeek-V4-Pro"
+
+    def test_configured_chat_model_refs_collects_unique_models_with_sources(
+        self, monkeypatch
+    ):
+        """Startup validation model collection is limited to configured chat refs."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("FCC_SMOKE_MODEL_NVIDIA_NIM", "nvidia_nim/smoke")
+        monkeypatch.setenv("WHISPER_MODEL", "openai/whisper-large-v3")
+        s = Settings()
+        s.model = "nvidia_nim/fallback"
+        s.model_opus = "open_router/anthropic/claude-opus"
+        s.model_sonnet = "nvidia_nim/fallback"
+        s.model_haiku = None
+
+        refs = s.configured_chat_model_refs()
+
+        assert [ref.model_ref for ref in refs] == [
+            "nvidia_nim/fallback",
+            "open_router/anthropic/claude-opus",
+        ]
+        assert refs[0].provider_id == "nvidia_nim"
+        assert refs[0].model_id == "fallback"
+        assert refs[0].sources == ("MODEL", "MODEL_SONNET")
+        assert refs[1].provider_id == "open_router"
+        assert refs[1].model_id == "anthropic/claude-opus"
+        assert refs[1].sources == ("MODEL_OPUS",)

@@ -2,6 +2,7 @@
 
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -15,11 +16,21 @@ from .nim import NimSettings
 from .provider_ids import SUPPORTED_PROVIDER_IDS
 
 
+@dataclass(frozen=True, slots=True)
+class ConfiguredChatModelRef:
+    """A unique configured chat model reference and the env keys that set it."""
+
+    model_ref: str
+    provider_id: str
+    model_id: str
+    sources: tuple[str, ...]
+
+
 def _env_files() -> tuple[Path, ...]:
     """Return env file paths in priority order (later overrides earlier)."""
     files: list[Path] = [
-        Path.home() / ".config" / "free-claude-code" / ".env",
         Path(".env"),
+        Path.home() / ".config" / "free-claude-code" / ".env",
     ]
     if explicit := os.environ.get("FCC_ENV_FILE"):
         files.append(Path(explicit))
@@ -101,6 +112,12 @@ class Settings(BaseSettings):
     # ==================== DeepSeek Config ====================
     deepseek_api_key: str = Field(default="", validation_alias="DEEPSEEK_API_KEY")
 
+    # ==================== Kimi Config ====================
+    kimi_api_key: str = Field(default="", validation_alias="KIMI_API_KEY")
+
+    # ==================== Wafer Config ====================
+    wafer_api_key: str = Field(default="", validation_alias="WAFER_API_KEY")
+
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"
     messaging_platform: str = Field(
@@ -150,6 +167,8 @@ class Settings(BaseSettings):
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
     lmstudio_proxy: str = Field(default="", validation_alias="LMSTUDIO_PROXY")
     llamacpp_proxy: str = Field(default="", validation_alias="LLAMACPP_PROXY")
+    kimi_proxy: str = Field(default="", validation_alias="KIMI_PROXY")
+    wafer_proxy: str = Field(default="", validation_alias="WAFER_PROXY")
 
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
@@ -440,6 +459,30 @@ class Settings(BaseSettings):
         if "sonnet" in name_lower and self.model_sonnet is not None:
             return self.model_sonnet
         return self.model
+
+    def configured_chat_model_refs(self) -> tuple[ConfiguredChatModelRef, ...]:
+        """Return unique configured chat provider/model refs with source env keys."""
+        candidates = (
+            ("MODEL", self.model),
+            ("MODEL_OPUS", self.model_opus),
+            ("MODEL_SONNET", self.model_sonnet),
+            ("MODEL_HAIKU", self.model_haiku),
+        )
+        sources_by_ref: dict[str, list[str]] = {}
+        for source, model_ref in candidates:
+            if model_ref is None:
+                continue
+            sources_by_ref.setdefault(model_ref, []).append(source)
+
+        return tuple(
+            ConfiguredChatModelRef(
+                model_ref=model_ref,
+                provider_id=Settings.parse_provider_type(model_ref),
+                model_id=Settings.parse_model_name(model_ref),
+                sources=tuple(sources),
+            )
+            for model_ref, sources in sources_by_ref.items()
+        )
 
     def resolve_thinking(self, claude_model_name: str) -> bool:
         """Resolve whether thinking is enabled for an incoming Claude model name."""
